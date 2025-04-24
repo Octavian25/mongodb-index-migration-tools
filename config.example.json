@@ -1,0 +1,85 @@
+{
+    "source": {
+      "uri": "mongodb+srv://username:password@your-atlas-cluster.mongodb.net",
+      "dbName": "your_source_database"
+    },
+    "target": {
+      "uri": "mongodb://<user>:<password>@10.8.0.1:27017/?authSource=admin&replicaSet=rs0&retryWrites=true&w=majority&readPreference=secondaryPreferred&directConnection=true",
+      "dbName": "db_tmnurpsr"
+    },
+    "collections": [],
+    "customIndexes": [
+        {
+            "collectionName": "tm_bank",
+            "index": {
+              "key": { "kode_bank": 1 },
+              "name": "kode_bank_1",
+              "unique": true
+            }
+          },
+        {
+            "collectionName": "tm_dept",
+            "index": {
+              "key": { "kode_dept": 1 },
+              "name": "kode_dept_1",
+              "unique": true
+            }
+          },
+          {
+            "collectionName": "tm_gudang",
+            "index": {
+              "key": { "kode_gudang": 1 },
+              "name": "kode_gudang_1",
+              "unique": true
+            }
+          },
+          {
+            "collectionName": "tt_beli_detail",
+            "index": {
+              "key": { "no_faktur_beli": 1 },
+              "name": "no_faktur_beli_1",
+              "unique": true
+            }
+          },
+          {
+            "collectionName": "tt_opname",
+            "index": {
+              "key": { "no_opname": 1, "kode_barcode": 1 },
+              "name": "no_opname_1_kode_barcode_1",
+              "unique": true
+            }
+          },
+          {
+            "collectionName": "tp_jual_counter",
+            "index": {
+              "key": { "no_faktur_jual": 1 },
+              "name": "no_faktur_jual_1",
+              "unique": true
+            }
+          },
+          {
+            "collectionName": "tm_credit_card_customer",
+            "index": {
+              "key": { "no_hp": 1 },
+              "name": "no_hp_1",
+              "unique": true
+            }
+          },
+          {
+            "collectionName": "tm_credit_card_customer",
+            "index": {
+              "key": { "no_credit_card": 1 },
+              "name": "no_credit_card_1",
+              "unique": true
+            }
+          },
+          {
+            "collectionName": "tm_credit_card_customer",
+            "index": {
+              "key": { "no_ktp": 1 },
+              "name": "no_ktp_1",
+              "unique": true
+            }
+          }
+    ]
+  }
