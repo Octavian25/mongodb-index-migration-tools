@@ -9,6 +9,7 @@
     "interactive": "node mongodb-index-migration-enhanced.js interactive",
     "list-source": "node mongodb-index-migration-enhanced.js list-source",
     "list-target": "node mongodb-index-migration-enhanced.js list-target",
+    "compare": "node mongodb-index-migration-enhanced.js compare",
     "help": "node mongodb-index-migration-enhanced.js help"
   },
   "dependencies": {

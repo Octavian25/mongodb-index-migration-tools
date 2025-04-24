@@ -342,6 +342,178 @@ const listAllIndexes = async (client, dbName) => {
   }
 };
 
+// Helper function to check if two indexes are equivalent 
+const areIndexesEquivalent = (indexA, indexB) => {
+  // Compare keys (most important part)
+  const keysA = JSON.stringify(indexA.key);
+  const keysB = JSON.stringify(indexB.key);
+  
+  if (keysA !== keysB) return false;
+  
+  // Compare critical options
+  if (indexA.unique !== indexB.unique) return false;
+  if (indexA.sparse !== indexB.sparse) return false;
+  if (indexA.expireAfterSeconds !== indexB.expireAfterSeconds) return false;
+  
+  // For text indexes, compare weights if provided
+  if (indexA.key && Object.values(indexA.key).includes('text')) {
+    if (JSON.stringify(indexA.weights || {}) !== JSON.stringify(indexB.weights || {})) {
+      return false;
+    }
+  }
+  
+  // For partial indexes, compare filter if provided
+  if (JSON.stringify(indexA.partialFilterExpression || {}) !== 
+      JSON.stringify(indexB.partialFilterExpression || {})) {
+    return false;
+  }
+  
+  return true;
+};
+
+// Compare indexes between source and target databases
+const compareIndexes = async (sourceClient, targetClient) => {
+  try {
+    const sourceDb = sourceClient.db(config.source.dbName);
+    const targetDb = targetClient.db(config.target.dbName);
+    
+    // Get collections from source
+    const sourceCollections = await getCollections(sourceDb, config.collections);
+    logger.info(`Found ${sourceCollections.length} collections in source database`);
+    
+    // Get target collections
+    const targetCollections = await getCollections(targetDb, []);
+    
+    // Results object to store missing indexes
+    const missingIndexes = {};
+    let totalMissingIndexes = 0;
+    
+    // Process each collection
+    for (const collectionName of sourceCollections) {
+      logger.info(`Comparing indexes for collection ${collectionName}...`);
+      
+      // Get source indexes
+      const sourceIndexes = await getIndexes(sourceDb, collectionName);
+      
+      // Skip if collection doesn't exist in target
+      if (!targetCollections.includes(collectionName)) {
+        logger.warning(`Collection ${collectionName} doesn't exist in target database`);
+        missingIndexes[collectionName] = {
+          collectionMissing: true,
+          indexes: sourceIndexes.filter(index => index.name !== '_id_')
+        };
+        totalMissingIndexes += sourceIndexes.filter(index => index.name !== '_id_').length;
+        continue;
+      }
+      
+      // Get target indexes
+      const targetIndexes = await getIndexes(targetDb, collectionName);
+      
+      // Find missing indexes
+      const missing = [];
+      
+      for (const sourceIndex of sourceIndexes) {
+        // Skip _id_ index as it's automatically created
+        if (sourceIndex.name === '_id_') continue;
+        
+        // Check if equivalent index exists in target
+        const hasEquivalent = targetIndexes.some(targetIndex => 
+          areIndexesEquivalent(sourceIndex, targetIndex)
+        );
+        
+        if (!hasEquivalent) {
+          missing.push(sourceIndex);
+          totalMissingIndexes++;
+        }
+      }
+      
+      if (missing.length > 0) {
+        missingIndexes[collectionName] = {
+          collectionMissing: false,
+          indexes: missing
+        };
+      }
+    }
+    
+    // Display and return results
+    console.log('\n========== Missing Indexes Report ==========');
+    console.log(`Found ${totalMissingIndexes} indexes missing in target database`);
+    
+    if (totalMissingIndexes === 0) {
+      console.log('All source indexes exist in target database!');
+      return { missingIndexes, count: 0 };
+    }
+    
+    for (const [collectionName, data] of Object.entries(missingIndexes)) {
+      if (data.indexes.length === 0) continue;
+      
+      console.log(`\nCollection: ${collectionName}`);
+      if (data.collectionMissing) {
+        console.log('  [Collection does not exist in target database]');
+      }
+      
+      console.log('  Missing indexes:');
+      data.indexes.forEach((index, i) => {
+        console.log(`  ${i + 1}. Name: ${index.name}`);
+        console.log(`     Key: ${JSON.stringify(index.key)}`);
+        
+        // Display important options
+        const options = [];
+        if (index.unique) options.push('unique');
+        if (index.sparse) options.push('sparse');
+        if (index.expireAfterSeconds !== undefined) options.push(`TTL: ${index.expireAfterSeconds}s`);
+        if (index.weights) options.push(`weights: ${JSON.stringify(index.weights)}`);
+        if (index.partialFilterExpression) options.push(`filter: ${JSON.stringify(index.partialFilterExpression)}`);
+        
+        if (options.length > 0) {
+          console.log(`     Options: ${options.join(', ')}`);
+        }
+      });
+    }
+    
+    // Ask if user wants to save missing indexes to config
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+    
+    const saveToConfig = await new Promise(resolve => {
+      rl.question('\nDo you want to save these missing indexes to config.json for future creation? (y/n): ', answer => {
+        resolve(answer.toLowerCase() === 'y');
+        rl.close();
+      });
+    });
+    
+    if (saveToConfig) {
+      if (!config.customIndexes) config.customIndexes = [];
+      
+      // Add missing indexes to config
+      for (const [collectionName, data] of Object.entries(missingIndexes)) {
+        for (const index of data.indexes) {
+          config.customIndexes.push({
+            collectionName,
+            index
+          });
+        }
+      }
+      
+      // Save updated config
+      fs.writeFileSync(
+        path.join(__dirname, 'config.json'),
+        JSON.stringify(config, null, 2),
+        'utf8'
+      );
+      
+      logger.success('Missing indexes added to configuration file');
+    }
+    
+    return { missingIndexes, count: totalMissingIndexes };
+  } catch (error) {
+    logger.error(`Error comparing indexes: ${error.message}`);
+    return { missingIndexes: {}, count: 0 };
+  }
+};
+
 // Main function
 const main = async () => {
   let sourceClient = null;
@@ -368,17 +540,18 @@ Commands:
   interactive Start interactive index creation mode
   list-source List all indexes in source database
   list-target List all indexes in target database
+  compare     Compare indexes between source and target databases
   help        Show this help message
       `);
       return;
     }
     
     // Connect to databases based on the command
-    if (['migrate', 'list-source'].includes(command)) {
+    if (['migrate', 'list-source', 'compare'].includes(command)) {
       sourceClient = await connectToMongo(config.source.uri);
     }
     
-    if (['migrate', 'create', 'interactive', 'list-target'].includes(command)) {
+    if (['migrate', 'create', 'interactive', 'list-target', 'compare'].includes(command)) {
       targetClient = await connectToMongo(config.target.uri);
     }
     
@@ -422,6 +595,11 @@ Commands:
         break;
       }
       
+      case 'compare': {
+        await compareIndexes(sourceClient, targetClient);
+        break;
+      }
+      
       default:
         logger.error(`Unknown command: ${command}`);
         logger.info('Use "help" command to see available options');
@@ -441,8 +619,18 @@ Commands:
   }
 };
 
-// Run the application
-main().catch(error => {
-  logger.error(`Unhandled error: ${error.message}`);
-  process.exit(1);
-});
+// Export functions for potential use as a module
+module.exports = {
+  compareIndexes,
+  createCustomIndexes,
+  getIndexes,
+  listAllIndexes
+};
+
+// Run the application if called directly
+if (require.main === module) {
+  main().catch(error => {
+    logger.error(`Unhandled error: ${error.message}`);
+    process.exit(1);
+  });
+}
